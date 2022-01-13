@@ -1,7 +1,7 @@
 {
   "name": "bitburner-scripts",
   "version": "0.1.0",
-  "description": "",
+  "description": "bitburner scripts",
   "private": true,
   "type": "module",
   "scripts": {
