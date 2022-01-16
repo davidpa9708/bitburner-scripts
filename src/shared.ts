@@ -138,6 +138,36 @@ export const formatTable = (values: string[][]) => {
     .join("\n");
 };
 
+interface HeaderInfo<T = any> {
+  name: string;
+  value?: (v: T) => any;
+  format?: (v: any) => string;
+}
+
+type Header<T = any> = keyof T | HeaderInfo<T>;
+
+export function renderTable<T = any>(
+  headers: Header<T>[],
+  rows: T[],
+  { noHeader = false } = {}
+): string {
+  const defaultFormat = (v: any) => v.toString();
+
+  const parsed = headers.map((header) =>
+    typeof header === "string" ? { name: header } : header
+  ) as HeaderInfo[];
+
+  const headerRow = _.map(parsed, "name");
+
+  const parsedRows = rows.map((row) =>
+    parsed.map(({ name, format = defaultFormat, value = (row) => row[name] }) =>
+      format(value(row))
+    )
+  );
+
+  return formatTable(noHeader ? parsedRows : [headerRow, ...parsedRows]);
+}
+
 const moneyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -172,3 +202,44 @@ export const formatTime = (v: number) => {
 };
 
 export const formatPercent = (v: number) => `${formatFloat(v * 100)}%`;
+
+export function getSchedule<T = any>(
+  tasks: T[],
+  getTime: (task: T) => number
+): { tasks: [T, number][]; maxTime: number } {
+  const WAIT_TIME = 100;
+  const extra = tasks.length * WAIT_TIME;
+
+  const mapped: [T, number][] = tasks.map((t) => [t, getTime(t)]);
+  const maxTime: number = Math.max(_.maxBy<any>(mapped, "1")[1] + extra);
+
+  const total = tasks.length;
+
+  const withTime: [T, number][] = mapped.map(([t, time], i) => [
+    t,
+    maxTime - (total - i) * WAIT_TIME - time,
+  ]);
+
+  const min = _.minBy<any>(withTime, "1")[1];
+  const adjusted: [T, number][] = withTime.map(([t, time]) => [t, time - min]);
+
+  return { tasks: adjusted, maxTime: maxTime - min - WAIT_TIME };
+}
+
+export interface Task {
+  run: (delay: number) => void;
+  time: number;
+}
+
+export async function schedule(ns: NS, tasks: Task[]) {
+  const { tasks: schduledTasks, maxTime } = getSchedule(
+    tasks,
+    _.iteratee("time")
+  );
+
+  for (const [{ run }, startTime] of schduledTasks) {
+    run(startTime);
+  }
+
+  await ns.asleep(maxTime);
+}

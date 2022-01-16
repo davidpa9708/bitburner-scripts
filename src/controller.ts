@@ -1,10 +1,11 @@
 import {
   divideServersV2,
-  getRootServers,
-  formatTime,
   formatMoney,
-  scanAll,
+  formatTime,
+  getRootServers,
   runFull,
+  scanAll,
+  schedule,
 } from "./shared.js";
 
 const flags: Flags = [
@@ -19,45 +20,6 @@ const flags: Flags = [
 export function autocomplete(data: AutocompleteData) {
   data.flags(flags);
   return [...data.servers];
-}
-
-async function schedule(
-  ns: NS,
-  tasks: {
-    name: string;
-    run: (delay: number) => void;
-    time: number;
-  }[]
-) {
-  const WAIT_TIME = 100;
-  const extra = tasks.length * WAIT_TIME;
-
-  const maxTime = _.maxBy(tasks, "time")!.time + extra;
-
-  const withTime = tasks.map(({ name, run, time }, i) => ({
-    name,
-    run,
-    startTime: maxTime - i * extra - time,
-  }));
-
-  const sorted = _.sortBy(withTime, "startTime");
-
-  for (const { run, startTime } of sorted) {
-    run(startTime);
-  }
-
-  await ns.asleep(maxTime);
-
-  // const clock = new Clock(ns, maxTime);
-  // ns.print(`+starting`);
-  // for (const { name, run, startTime } of sorted) {
-  //   await clock.waitMark(startTime);
-  //   ns.print(`-${name}`);
-  //   run();
-  //   await ns.asleep(WAIT_TIME);
-  // }
-  // await clock.waitAll();
-  // ns.print(`+done`);
 }
 
 export async function main(ns: NS) {
@@ -190,7 +152,6 @@ class Controller {
 
     await schedule(this.ns, [
       {
-        name: "weaken",
         run: this.getRunner(
           [
             ...this.hackCluster,
@@ -220,7 +181,6 @@ class Controller {
 
     await schedule(this.ns, [
       {
-        name: "weaken",
         run: this.getRunner(
           [...this.weakenCluster, ...this.hackCluster],
           Controller.weakenScript,
@@ -229,7 +189,6 @@ class Controller {
         time: weakenTime,
       },
       {
-        name: "grow",
         run: this.getRunner(
           [...this.growCluster, ...this.weaken2Cluster],
           Controller.growScript,
@@ -256,12 +215,10 @@ class Controller {
 
     await schedule(this.ns, [
       {
-        name: "hack",
         run: this.getRunner(this.hackCluster, Controller.hackScript, target),
         time: hackTime,
       },
       {
-        name: "weaken",
         run: this.getRunner(
           this.weakenCluster,
           Controller.weakenScript,
@@ -270,12 +227,10 @@ class Controller {
         time: weakenTime,
       },
       {
-        name: "grow",
         run: this.getRunner(this.growCluster, Controller.growScript, target),
         time: growTime,
       },
       {
-        name: "weaken",
         run: this.getRunner(
           this.weaken2Cluster,
           Controller.weakenScript,
@@ -300,7 +255,6 @@ class Controller {
 
     await schedule(this.ns, [
       {
-        name: "hack",
         run: this.getRunner(
           [...this.hackCluster, ...this.growCluster],
           Controller.hackScript,
@@ -309,7 +263,6 @@ class Controller {
         time: hackTime,
       },
       {
-        name: "weaken",
         run: this.getRunner(
           [...this.weakenCluster, ...this.weaken2Cluster],
           Controller.weakenScript,

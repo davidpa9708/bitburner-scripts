@@ -33,6 +33,7 @@ interface NS {
 
   print(...args: any[]): void;
   tprint(...args: any[]): void;
+  enableLog(script: string): void;
   disableLog(script: string): void;
 
   getPurchasedServers(): string[];
@@ -70,4 +71,7 @@ interface NS {
   getHackTime(host: string): number;
 
   hackAnalyzeChance(host: string): number;
+
+  hackAnalyzeThreads(host: string, hackAmount: number): number;
+  growthAnalyze(host: string, growthAmount: number, cores?: number): number;
 }
