@@ -10,20 +10,24 @@ import {
 } from "./shared";
 
 function getBestServersToHack(ns: NS) {
-  const servers = scanAll(ns).map((host) => ({
-    host,
-    money: ns.getServerMoneyAvailable(host),
-    maxMoney: ns.getServerMaxMoney(host),
-    hackChance: ns.hackAnalyzeChance(host),
-    weakenTime: ns.getWeakenTime(host),
-    sec: ns.getServerMinSecurityLevel(host),
-    minSec: ns.getServerSecurityLevel(host),
-  }));
+  const servers = scanAll(ns)
+    .filter((host) => ns.hasRootAccess(host))
+    .map((host) => ({
+      host,
+      money: ns.getServerMoneyAvailable(host),
+      maxMoney: ns.getServerMaxMoney(host),
+      hackChance: ns.hackAnalyzeChance(host),
+      weakenTime: ns.getWeakenTime(host),
+      sec: ns.getServerSecurityLevel(host),
+      minSec: ns.getServerMinSecurityLevel(host),
+    }));
 
   const sorted = _.orderBy(
     _.filter(servers, (server) => server.maxMoney > 0),
     [
       (server) => (server.weakenTime < 60 * 1000 ? 0 : 1),
+      (server) => (server.weakenTime < 2 * 60 * 1000 ? 0 : 1),
+      (server) => (server.weakenTime < 3 * 60 * 1000 ? 0 : 1),
       (server) => (server.hackChance > 0.8 ? 0 : 1),
       (server) => -(server.maxMoney / server.weakenTime),
     ]
@@ -34,7 +38,7 @@ function getBestServersToHack(ns: NS) {
 
 type Script = "hack" | "weaken" | "grow";
 
-const FILES: Record<string, string> = {
+const FILES: Record<Script, string> = {
   weaken: "weaken.js",
   grow: "grow.js",
   hack: "hack.js",
@@ -93,7 +97,14 @@ type Task = {
 
 /** @returns Cost of a thread in ram is the most expensive script */
 const getThreadCost = (ns: NS) =>
-  Math.max(...["weaken", "grow", "hack"].map((s) => ns.getScriptRam(FILES[s])));
+  Math.max(
+    ...["weaken", "grow", "hack"].map((s) =>
+      ns.getScriptRam(FILES[s as Script])
+    )
+  );
+
+const getRam = (ns: NS, host: string) =>
+  ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
 
 async function growTarget(ns: NS, target: string, servers: string[]) {
   const THREAD_RAM = getThreadCost(ns);
@@ -105,7 +116,7 @@ async function growTarget(ns: NS, target: string, servers: string[]) {
 
   const unsortedTasks = servers
     .flatMap((host) => {
-      const ram = ns.getServerMaxRam(host);
+      const ram = getRam(ns, host);
       const threads = Math.floor(ram / THREAD_RAM);
 
       const [wt, gt] = calcFunc(threads, WEAKEN_COST, GROW_COST);
@@ -139,7 +150,7 @@ async function hackTarget(ns: NS, target: string, servers: string[]) {
 
   const unsortedTasks: Task[] = servers
     .flatMap((host) => {
-      const ram = ns.getServerMaxRam(host);
+      const ram = getRam(ns, host);
       const threads = Math.floor(ram / THREAD_RAM);
 
       const [wt, ht] = calcFunc(threads / 2, WEAKEN_COST, HACK_COST);
@@ -173,7 +184,7 @@ export async function main(ns: NS) {
   const getRootServers = () =>
     scanAll(ns)
       .filter((host) => ns.hasRootAccess(host))
-      .concat(["home"]);
+      .concat("home");
 
   ns.atExit(() => {
     getRootServers().forEach((host) => ns.killall(host));
@@ -188,9 +199,20 @@ export async function main(ns: NS) {
 
     const rootServers = getRootServers();
 
+    for (const host of rootServers.filter((p) => p === "home")) {
+      await ns.scp(
+        [FILES.weaken, FILES.hack, FILES.grow],
+        ns.getHostname(),
+        host
+      );
+    }
+
     if (server.sec > server.minSec + 5)
       await weakenTarget(ns, target, rootServers);
-    else if (server.money < server.maxMoney * 0.9)
+    else if (
+      server.money < server.maxMoney * 0.9 &&
+      server.money < ns.getPlayer().money
+    )
       await growTarget(ns, target, rootServers);
     else await hackTarget(ns, target, rootServers);
 

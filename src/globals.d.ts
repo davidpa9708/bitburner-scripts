@@ -9,6 +9,10 @@ interface AutocompleteData {
 
 type Server = any;
 
+interface Player {
+  money: number;
+}
+
 /** @see https://github.com/danielyxie/bitburner/blob/dev/markdown/bitburner.ns.md */
 interface NS {
   args: string[];
@@ -16,6 +20,7 @@ interface NS {
   scan(host: string): string[];
   getHostname(): string;
   getServer(host: string): Server;
+  getPlayer(): Player;
 
   write(
     handle: string,
