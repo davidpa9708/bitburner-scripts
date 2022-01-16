@@ -8,13 +8,42 @@ export function scanAll(
   ns: NS,
   target = ns.getHostname(),
   visited = new Set()
-): any {
+): string[] {
   visited.add(target);
 
   return ns
     .scan(target)
     .filter((child) => !visited.has(child))
     .flatMap((child) => [child, ...scanAll(ns, child, visited)]);
+}
+
+export function trace(
+  ns: NS,
+  target: string,
+  host = ns.getHostname(),
+  visited = new Set<string>()
+): string[] | null {
+  visited.add(host);
+
+  const children = ns.scan(host).filter((child) => !visited.has(child));
+
+  for (const child of children) {
+    if (child === target) {
+      return [host, target];
+    }
+
+    const path = trace(ns, target, child, visited);
+
+    if (path) {
+      return [host, ...path];
+    }
+  }
+
+  return null;
+}
+
+export function getRootServers(ns: NS) {
+  return scanAll(ns).filter((host) => ns.hasRootAccess(host));
 }
 
 export function getMaxThreads(ns: NS, script: string, host: string) {
@@ -61,24 +90,38 @@ export function divideServers<T>(
   return result;
 }
 
-export function runFull(ns: NS, script: string, host: string, target: string) {
-  const threads = getMaxThreads(ns, script, host);
+export function divideServersV2<T>(
+  servers: T[],
+  times: number,
+  getValue: (host: T) => number
+): T[][] {
+  const result: T[][] = Array.from({ length: times }, () => []);
 
-  return threads > 0 && ns.exec(script, host, threads, target);
+  const resultValue = Array.from({ length: times }, () => 0);
+
+  const sortedServers = _.sortBy(servers, (v) => -getValue(v));
+
+  for (const server of sortedServers) {
+    const i = _.minBy<number>(
+      _.range(times),
+      ((i: number) => resultValue[i]) as any
+    ) as number;
+    result[i].push(server);
+    resultValue[i] += getValue(server);
+  }
+
+  return result;
 }
 
-export function clusterRun(
+export function runFull(
   ns: NS,
-  cluster: string[],
   script: string,
-  target: string
+  host: string,
+  ...args: (string | number)[]
 ) {
-  for (const host of cluster) {
-    ns.killall(host);
+  const threads = getMaxThreads(ns, script, host);
 
-    if (!runFull(ns, script, host, target))
-      ns.print(`Failed to run ${script} on ${host}`);
-  }
+  return threads > 0 && ns.exec(script, host, threads, ...args);
 }
 
 export const formatTable = (values: string[][]) => {
