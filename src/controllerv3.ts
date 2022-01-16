@@ -182,10 +182,7 @@ export async function main(ns: NS) {
 
     if (server.sec > server.minSec + 5)
       await weakenTarget(ns, target, rootServers);
-    else if (
-      server.money < server.maxMoney * 0.9 &&
-      server.money < ns.getPlayer().money
-    )
+    else if (server.money < server.maxMoney * 0.9)
       await growTarget(ns, target, rootServers);
     else await hackTarget(ns, target, rootServers);
 
