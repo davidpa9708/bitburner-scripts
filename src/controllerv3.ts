@@ -17,22 +17,20 @@ const FILES: Record<Script, string> = {
   hack: "hack.js",
 };
 
-function runScript(
-  ns: NS,
-  script: Script,
-  host: string,
-  target: string,
-  { threads = getMaxThreads(ns, FILES[script], host), delay = 0 } = {}
-) {
-  ns.exec(FILES[script], host, threads, target, "--delay", delay);
-}
+/**
+ * @example
+ *   THREAD_RAM = getThreadCost(ns);
+ *
+ * @note needs to be updated from main
+ */
+let THREAD_RAM: number = null as any;
 
-async function weakenTarget(ns: NS, target: string, servers: string[]) {
-  for (const host of servers) {
-    runScript(ns, "weaken", host, target);
-  }
-
-  await ns.asleep(ns.getWeakenTime(target));
+function setupGlobals(ns: NS) {
+  THREAD_RAM = Math.max(
+    ...["weaken", "grow", "hack"].map((s) =>
+      ns.getScriptRam(FILES[s as Script])
+    )
+  );
 }
 
 const WEAKEN_COST = 0.05;
@@ -68,30 +66,27 @@ type Task = {
   script: Script;
 };
 
-/** @returns Cost of a thread in ram is the most expensive script */
-const getThreadCost = (ns: NS) =>
-  Math.max(
-    ...["weaken", "grow", "hack"].map((s) =>
-      ns.getScriptRam(FILES[s as Script])
-    )
-  );
+interface Slot {
+  host: string;
+  threads: number;
+}
 
-const getRam = (ns: NS, host: string) =>
-  ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
+async function weakenTarget(ns: NS, target: string, slots: Slot[]) {
+  for (const { host, threads } of slots) {
+    runScript(ns, "weaken", host, target, { threads });
+  }
 
-async function growTarget(ns: NS, target: string, servers: string[]) {
-  const THREAD_RAM = getThreadCost(ns);
+  await ns.asleep(ns.getWeakenTime(target));
+}
 
+async function growTarget(ns: NS, target: string, slots: Slot[]) {
   const runtime = {
     grow: ns.getGrowTime(target),
     weaken: ns.getWeakenTime(target),
   };
 
-  const unsortedTasks = servers
-    .flatMap((host) => {
-      const ram = getRam(ns, host);
-      const threads = Math.floor(ram / THREAD_RAM);
-
+  const unsortedTasks = slots
+    .flatMap(({ host, threads }) => {
       const [wt, gt] = calcFunc(threads, WEAKEN_COST, GROW_COST);
 
       return [
@@ -113,19 +108,15 @@ async function growTarget(ns: NS, target: string, servers: string[]) {
   await ns.asleep(maxTime);
 }
 
-async function hackTarget(ns: NS, target: string, servers: string[]) {
-  const THREAD_RAM = getThreadCost(ns);
+async function hackTarget(ns: NS, target: string, slots: Slot[]) {
   const runtime = {
     grow: ns.getGrowTime(target),
     weaken: ns.getWeakenTime(target),
     hack: ns.getHackTime(target),
   };
 
-  const unsortedTasks: Task[] = servers
-    .flatMap((host) => {
-      const ram = getRam(ns, host);
-      const threads = Math.floor(ram / THREAD_RAM);
-
+  const unsortedTasks: Task[] = slots
+    .flatMap(({ host, threads }) => {
       const [wt, ht] = calcFunc(threads / 2, WEAKEN_COST, HACK_COST);
       const [_, gt] = calcFunc(threads / 2, WEAKEN_COST, GROW_COST);
 
@@ -151,6 +142,8 @@ async function hackTarget(ns: NS, target: string, servers: string[]) {
 }
 
 export async function main(ns: NS) {
+  setupGlobals(ns);
+
   ns.disableLog("ALL");
   ns.tail();
 
@@ -170,24 +163,45 @@ export async function main(ns: NS) {
 
     showInfo(ns, servers.slice(0, 5).reverse());
 
-    const rootServers = getRootServers();
+    const slots = getAvailableSlots(ns);
+    // const rootServers = getRootServers();
 
-    for (const host of rootServers.filter((p) => p === "home")) {
+    for (const slot of slots) {
+      if (slot.host === "home") continue;
       await ns.scp(
         [FILES.weaken, FILES.hack, FILES.grow],
         ns.getHostname(),
-        host
+        slot.host
       );
     }
 
-    if (server.sec > server.minSec + 5)
-      await weakenTarget(ns, target, rootServers);
+    if (server.sec > server.minSec + 5) await weakenTarget(ns, target, slots);
     else if (server.money < server.maxMoney * 0.9)
-      await growTarget(ns, target, rootServers);
-    else await hackTarget(ns, target, rootServers);
+      await growTarget(ns, target, slots);
+    else await hackTarget(ns, target, slots);
 
     await ns.asleep(100); // always wait a bit just in case
   }
+}
+
+function getSlot(ns: NS, host: string, spare = 0): Slot | null {
+  const max = ns.getServerMaxRam(host);
+  const used = ns.getServerUsedRam(host);
+  const left = Math.max(max - used - spare, 0);
+
+  const threads = Math.floor(left / THREAD_RAM);
+
+  if (threads <= 0) return null;
+  return { host, threads };
+}
+
+function getAvailableSlots(ns: NS): Slot[] {
+  return [
+    ...scanAll(ns)
+      .filter((host) => ns.hasRootAccess(host))
+      .map((host) => getSlot(ns, host)),
+    getSlot(ns, "home", 8),
+  ].filter((slot) => slot?.threads ?? 0 > 0) as Slot[];
 }
 
 function getBestServersToHack(ns: NS) {
@@ -243,6 +257,26 @@ function showInfo(ns: NS, servers: ReturnType<typeof getBestServersToHack>) {
     )
   );
 }
+
+function runScript(
+  ns: NS,
+  script: Script,
+  host: string,
+  target: string,
+  { threads = getMaxThreads(ns, FILES[script], host), delay = 0 } = {}
+) {
+  ns.exec(FILES[script], host, threads, target, "--delay", delay);
+}
+
+// function runScriptInSlot(
+//   ns: NS,
+//   script: Script,
+//   slot: Slot,
+//   target: string,
+//   delay = 0
+// ) {
+//   runScript(ns, script, slot.host, target, { threads: slot.threads, delay });
+// }
 
 // const getThreadsToGrow = (target: string) =>
 //   ns.growthAnalyze(
