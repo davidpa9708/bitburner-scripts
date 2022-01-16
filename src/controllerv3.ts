@@ -52,10 +52,11 @@ export const calcFunc = (
   a: number,
   b: number
 ): [number, number] => {
-  const x = calcYFromT(threads, b, a);
   const y = calcYFromT(threads, a, b);
-  if ((x === 0 || y === 0) && threads >= 2) {
-    return [1, threads - 1];
+  const x = threads - y;
+  if (x === 0 || y === 0) {
+    if (threads >= 2) return [1, threads - 1];
+    else return [0, 0];
   }
   return [x, y];
 };
