@@ -71,6 +71,8 @@ interface NS {
   getServerSecurityLevel(host: string): number;
   getServerMinSecurityLevel(host: string): number;
 
+  getServerGrowth(host: string): number;
+
   getWeakenTime(host: string): number;
   getGrowTime(host: string): number;
   getHackTime(host: string): number;

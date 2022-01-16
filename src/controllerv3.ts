@@ -9,33 +9,6 @@ import {
   getSchedule,
 } from "./shared";
 
-function getBestServersToHack(ns: NS) {
-  const servers = scanAll(ns)
-    .filter((host) => ns.hasRootAccess(host))
-    .map((host) => ({
-      host,
-      money: ns.getServerMoneyAvailable(host),
-      maxMoney: ns.getServerMaxMoney(host),
-      hackChance: ns.hackAnalyzeChance(host),
-      weakenTime: ns.getWeakenTime(host),
-      sec: ns.getServerSecurityLevel(host),
-      minSec: ns.getServerMinSecurityLevel(host),
-    }));
-
-  const sorted = _.orderBy(
-    _.filter(servers, (server) => server.maxMoney > 0),
-    [
-      (server) => (server.weakenTime < 60 * 1000 ? 0 : 1),
-      (server) => (server.weakenTime < 2 * 60 * 1000 ? 0 : 1),
-      (server) => (server.weakenTime < 3 * 60 * 1000 ? 0 : 1),
-      (server) => (server.hackChance > 0.8 ? 0 : 1),
-      (server) => -(server.maxMoney / server.weakenTime),
-    ]
-  );
-
-  return sorted;
-}
-
 type Script = "hack" | "weaken" | "grow";
 
 const FILES: Record<Script, string> = {
@@ -220,6 +193,35 @@ export async function main(ns: NS) {
   }
 }
 
+function getBestServersToHack(ns: NS) {
+  const servers = scanAll(ns)
+    .filter((host) => ns.hasRootAccess(host))
+    .map((host) => ({
+      host,
+      money: ns.getServerMoneyAvailable(host),
+      maxMoney: ns.getServerMaxMoney(host),
+      hackChance: ns.hackAnalyzeChance(host),
+      weakenTime: ns.getWeakenTime(host),
+      sec: ns.getServerSecurityLevel(host),
+      minSec: ns.getServerMinSecurityLevel(host),
+      growth: ns.getServerGrowth(host),
+    }));
+
+  const sorted = _.orderBy(
+    _.filter(servers, (server) => server.maxMoney > 0),
+    [
+      (server) => (server.weakenTime < 60 * 1000 ? 0 : 1),
+      (server) => (server.weakenTime < 2 * 60 * 1000 ? 0 : 1),
+      (server) => (server.weakenTime < 3 * 60 * 1000 ? 0 : 1),
+      (server) => (server.hackChance > 0.8 ? 0 : 1),
+      (server) => -(server.growth / server.weakenTime),
+      // (server) => -(server.maxMoney / server.weakenTime),
+    ]
+  );
+
+  return sorted;
+}
+
 function showInfo(ns: NS, servers: ReturnType<typeof getBestServersToHack>) {
   ns.print(
     "\n",
@@ -238,6 +240,7 @@ function showInfo(ns: NS, servers: ReturnType<typeof getBestServersToHack>) {
         },
         { name: "hackChance", format: formatPercent },
         { name: "weakenTime", format: formatTime },
+        { name: "growth", format: formatFloat },
       ],
       servers
     )
