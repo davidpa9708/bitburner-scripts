@@ -37,6 +37,13 @@ const WEAKEN_COST = 0.05;
 const GROW_COST = 0.004;
 const HACK_COST = 0.002;
 
+/**
+ * - `t = x + y`
+ * - `ax = by`
+ *
+ * @returns `y`
+ * @note value will be floored
+ */
 const calcYFromT = (threads: number, a: number, b: number) =>
   Math.floor(threads / (b / a + 1));
 
@@ -45,7 +52,7 @@ const calcYFromT = (threads: number, a: number, b: number) =>
  * - `ax = by`
  *
  * @returns `[x, y]`
- * @note `x` and `y` won't be exact, they will be floored and probably will miss by 1, and will try to return at least 1 for x and y
+ * @note `y` will be floored, will return `[0, 0]` if `x` or `y` is 0
  */
 export const calcFunc = (
   threads: number,
