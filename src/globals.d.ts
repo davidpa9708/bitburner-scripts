@@ -17,6 +17,9 @@ interface Player {
 interface NS {
   args: string[];
 
+  hacknet: any;
+  getHacknetMultipliers(): any;
+  clearLog(): void;
   scan(host: string): string[];
   getHostname(): string;
   getServer(host: string): Server;
@@ -53,12 +56,13 @@ interface NS {
   ): void;
 
   // info
+  ls(hostname: string): string[];
   getHackingLevel(): number;
 
   // server ram
   getServerMaxRam(host: string): number;
   getServerUsedRam(host: string): number;
-  getScriptRam(host: string): number;
+  getScriptRam(script: string, host: string): number;
 
   // server info
   hasRootAccess(host: string): boolean;
@@ -76,6 +80,8 @@ interface NS {
   getWeakenTime(host: string): number;
   getGrowTime(host: string): number;
   getHackTime(host: string): number;
+
+  hackAnalyze(host: string): number;
 
   hackAnalyzeChance(host: string): number;
 
