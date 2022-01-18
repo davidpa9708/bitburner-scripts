@@ -13,24 +13,37 @@ export const sumStats = (...args: Partial<StatThreads>[]): StatThreads =>
     { hack: 0, grow: 0, weaken: 0 }
   );
 
-function normalizeThreads({ hack, grow, weaken }: StatThreads, threads = 1) {
-  const factor = threads / (hack + grow + weaken);
+function normalizeThreads(stats: StatThreads, threads = 1) {
+  const factor = threads / (stats.hack + stats.grow + stats.weaken);
+  const weaken = Math.min(Math.round(stats.weaken * factor), threads);
+  const factor1 = (threads - weaken) / (stats.hack + stats.grow);
+  const grow = Math.max(Math.round(stats.grow * factor1), 0);
+  const hack = Math.max(threads - weaken - grow, 0);
   return {
-    hack: Math.floor(hack * factor),
-    grow: Math.floor(grow * factor),
-    weaken: Math.floor(weaken * factor),
+    hack,
+    grow,
+    weaken,
   };
 }
 
 /** @class */
 export class Server {
-  expectedSecurity = 0;
+  _expectedSecurity: number;
   ns: NS;
   hostname: string;
   constructor(ns: NS, hostname: string) {
     this.ns = ns;
     this.hostname = hostname;
-    this.expectedSecurity = this.security.actual;
+    this._expectedSecurity = this.security.actual;
+  }
+  get expectedSecurity() {
+    return this._expectedSecurity;
+  }
+  set expectedSecurity(newSecurity: number) {
+    this._expectedSecurity = Math.min(
+      Math.max(newSecurity, this.ns.getServerMinSecurityLevel(this.hostname)),
+      100
+    );
   }
   get canHack() {
     return (
@@ -45,7 +58,7 @@ export class Server {
     );
   }
   get totalThreads() {
-    return this.ram / this.ns.getScriptRam("grow.js", "home");
+    return Math.floor(this.ram / this.ns.getScriptRam("grow.js", "home"));
   }
   get root() {
     return this.ns.hasRootAccess(this.hostname);
@@ -94,71 +107,45 @@ export class Server {
     );
   }
 
-  async doScript(
+  doScript(
     script: "hack" | "grow" | "weaken",
     server: Server,
-    _threads: number,
+    threads: number,
     delay: number
   ) {
-    const scriptFile = `${script}.js`;
-    // const threads = Math.ceil(Math.sqrt(Math.sqrt(_threads)));
-    const threads = 1;
-    const threadCount = Math.floor(_threads / threads);
-    const scriptRam = this.ns.getScriptRam(script, "home");
-    await this.ns.scp(scriptFile, "home", this.hostname);
-    await this.ns.sleep(10);
-    if (
-      this.ram < scriptRam * threadCount ||
-      !Math.floor(threads) ||
-      !Math.floor(threadCount)
-    ) {
-      return;
-    }
     // this.ns.print(`${script}ing ${server.hostname} from ${this.hostname} with ${threadCount * threads} threads; ram: ${Math.floor(this.ram)}`)
-    for (let thread = 0; thread < threads; thread++) {
-      if (scriptRam * threadCount > this.ram && threads) {
-        break;
-      }
-      const threadDelay = delay + (thread * server[script].time) / threads;
-      this.ns.exec(
-        scriptFile,
-        this.hostname,
-        threadCount,
-        threadDelay,
-        server.hostname
-      );
-      server.expectedSecurity += this[script].security * threadCount;
-    }
+    const scriptFile = `${script}.js`;
+    this.ns.exec(scriptFile, this.hostname, threads, delay, server.hostname);
+    server.expectedSecurity += this[script].security * threads;
   }
-  public async doThreads(
+  public doThreads(
     server: Server,
     threadStats: StatThreads,
     delay = 0,
     threads = 1
-  ): Promise<number> {
+  ): number {
     let currentDelay = delay;
-    let threadsRemaining = threads;
-    const maxThreads = 100;
-    while (threadsRemaining > 0) {
-      const { hack, grow, weaken } = normalizeThreads(
-        threadStats,
-        Math.min(maxThreads, this.totalThreads)
-      );
-      const hackDelay = server.weaken.time - server.hack.time;
-      const growDelay = server.weaken.time - server.grow.time;
-      await this.doScript("hack", server, hack, currentDelay + hackDelay);
-      // await this.ns.sleep(5);
-      currentDelay += 200;
-      threadsRemaining -= hack;
-      await this.doScript("grow", server, grow, currentDelay + growDelay);
-      // await this.ns.sleep(5);
-      currentDelay += 200;
-      threadsRemaining -= grow;
-      await this.doScript("weaken", server, weaken, currentDelay);
-      // await this.ns.sleep(5);
-      currentDelay += 200;
-      threadsRemaining -= weaken;
+    const baseDelay = 20;
+
+    const { hack, grow, weaken } = normalizeThreads(
+      threadStats,
+      Math.min(threads, this.totalThreads)
+    );
+    const hackDelay = server.weaken.time - server.hack.time;
+    const growDelay = server.weaken.time - server.grow.time;
+    if (hack) {
+      this.doScript("hack", server, hack, currentDelay + hackDelay);
+      currentDelay += baseDelay;
     }
-    return delay;
+    if (grow) {
+      this.doScript("grow", server, grow, currentDelay + growDelay);
+      currentDelay += baseDelay;
+    }
+    if (weaken) {
+      this.doScript("weaken", server, weaken, currentDelay);
+      currentDelay += baseDelay;
+    }
+
+    return currentDelay;
   }
 }

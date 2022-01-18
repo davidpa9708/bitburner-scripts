@@ -1,4 +1,4 @@
-import { scanAll, formatTable } from "./shared";
+import { scanAll, formatTable, getBaseLog } from "./shared";
 import { StatThreads, sumStats, Server, HACK, WEAKEN, GROW } from "./Server";
 
 function printTable(ns: NS, servers: Server[]) {
@@ -56,64 +56,117 @@ export async function main(ns: NS) {
       .filter((server) => server.totalThreads > 0)
       .sort((a, b) => b.ram - a.ram);
 
-    const serversToHack = rootAccessServers
+    let serversToHack = rootAccessServers
       .sort((a, b) => b.sortFactor - a.sortFactor)
       .filter((server) => !!server.maxMoney && server.canHack)
-      .filter((server) => server.weaken.time / 1000 / 60 < 2);
-    // .filter((server) => server.sortFactor / 10 < serversToHack[0].sortFactor);
+      .filter((server) => server.weaken.time / 1000 / 60 < 5);
 
-    let delay = 0;
-    const serverToHack = serversToHack[0];
-    table && printTable(ns, [serverToHack]);
+    serversToHack = serversToHack.filter(
+      (server) => server.sortFactor * 10 > serversToHack[0].sortFactor
+    );
+
+    table && printTable(ns, serversToHack);
+
+    let lastServer = 0;
 
     for (const ramServer of ramServers) {
-      const weakenStats = (security: number): StatThreads =>
-        sumStats({
-          weaken: security / WEAKEN,
-        });
-
-      const growStats = (relativeIncrease: number): StatThreads => {
-        const threads = ns.growthAnalyze(
-          serverToHack.hostname,
-          relativeIncrease
-        );
-        return sumStats({ grow: threads }, weakenStats(threads * GROW));
-      };
-
-      const hackStats = (): StatThreads => {
-        const increase = ns.hackAnalyze(serverToHack.hostname) + 1;
-        return sumStats({ hack: 1 }, weakenStats(HACK), growStats(increase));
-      };
-
-      delay = await ramServer.doThreads(
-        serverToHack,
-        weakenStats(serverToHack.security.remaining),
-        0,
-        weakenStats(serverToHack.security.remaining).weaken
+      await ns.scp(
+        ["hack.js", "grow.js", "weaken.js"],
+        "home",
+        ramServer.hostname
       );
-
-      await ns.sleep(5);
-      const growThreads = growStats(
-        serverToHack.money ? serverToHack.maxMoney / serverToHack.money : 1
-      );
-      delay = await ramServer.doThreads(
-        serverToHack,
-        growThreads,
-        delay,
-        growThreads.grow + growThreads.weaken
-      );
-      await ns.sleep(5);
-
-      delay = await ramServer.doThreads(
-        serverToHack,
-        hackStats(),
-        delay,
-        ramServer.totalThreads
-      );
-      await ns.sleep(5);
     }
 
-    ns.print("done");
-    await ns.sleep(serverToHack.weaken.time + delay + 2000);
+    let weakGrow = true;
+    while (lastServer < ramServers.length) {
+      for (const serverToHack of serversToHack) {
+        const getWeakenScripts = (security: number) => [
+          {
+            script: "weaken",
+            threads: Math.ceil(security / WEAKEN),
+          },
+        ];
+
+        const getGrowScripts = (relativeIncrease: number) => {
+          const threads = ns.growthAnalyze(
+            serverToHack.hostname,
+            relativeIncrease
+          );
+          return [
+            { script: "grow", threads: Math.ceil(threads) },
+            ...getWeakenScripts(threads * GROW),
+          ];
+        };
+
+        // will hack 60%;
+        const getHackScripts = (percentToSteal = 0.6) => {
+          const stolen = ns.hackAnalyze(serverToHack.hostname);
+          const threads = percentToSteal / stolen;
+
+          return [
+            { script: "hack", threads: Math.ceil(threads) },
+            ...getWeakenScripts(HACK * threads),
+            ...getGrowScripts(1 / (1 - percentToSteal)),
+          ];
+        };
+
+        const scriptsBatch: { script: any; threads: number }[][] = [];
+        if (weakGrow) {
+          scriptsBatch.push(getWeakenScripts(serverToHack.security.remaining));
+          scriptsBatch.push(
+            getGrowScripts(
+              serverToHack.money
+                ? serverToHack.maxMoney / serverToHack.money
+                : 2
+            )
+          );
+        }
+        scriptsBatch.push(getHackScripts());
+        let delay = 0;
+        for (const scripts of scriptsBatch) {
+          let remainingThreads = scripts.reduce(
+            (acc, { threads }) => acc + threads,
+            0
+          );
+          const stats = scripts.reduce(
+            (acc, { script, threads }) => {
+              acc[script as "hack" | "grow" | "weaken"] += threads;
+              return acc;
+            },
+            { hack: 0, grow: 0, weaken: 0 }
+          );
+          while (lastServer < ramServers.length && remainingThreads >= 1) {
+            const ramServer = ramServers[lastServer];
+            const usableThreads = Math.floor(
+              Math.min(ramServer.totalThreads, remainingThreads)
+            );
+            if (usableThreads < 1) {
+              lastServer++;
+              ns.print(
+                `no more ram on ${ramServer.hostname}; server ${
+                  serverToHack.hostname
+                }; new server ${
+                  serversToHack?.[lastServer]?.hostname || "none"
+                }`
+              );
+              break;
+            }
+            delay = ramServer.doThreads(
+              serverToHack,
+              stats,
+              delay,
+              usableThreads
+            );
+            remainingThreads -= usableThreads;
+          }
+        }
+        // break;
+      }
+      ns.print("still more ram, will wait 5s");
+      weakGrow = false;
+      await ns.sleep(5000);
+    }
+    // break;
+    await ns.sleep(serversToHack?.[0]?.weaken?.time + 5000);
   }
 }
